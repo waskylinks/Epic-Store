@@ -10,8 +10,7 @@ import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
-    FiGrid, FiList, FiFilter, FiX, 
-    FiPackage
+    FiGrid, FiList, FiFilter, FiX, FiPackage
 } from 'react-icons/fi';
 import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
 
@@ -20,38 +19,38 @@ function Products() {
     const { success: cartSuccess, message: cartMessage } = useSelector(state => state.cart);
     const dispatch = useDispatch();
 
-    const location = useLocation();
-    const navigate = useNavigate();
+    const location  = useLocation();
+    const navigate  = useNavigate();
     const searchParams = new URLSearchParams(location.search);
-    
-    const keyword = searchParams.get('keyword');
-    const pageFromURL = parseInt(searchParams.get('page'), 10) || 1;
+
+    const keyword        = searchParams.get('keyword');
+    const pageFromURL    = parseInt(searchParams.get('page'), 10) || 1;
     const categoryFromURL = searchParams.get('category');
 
-    const [currentPage, setCurrentPage] = useState(pageFromURL);
-    const [viewMode, setViewMode] = useState('grid');
+    const [currentPage,      setCurrentPage]      = useState(pageFromURL);
+    const [viewMode,         setViewMode]          = useState('grid');
     const [selectedCategory, setSelectedCategory] = useState(categoryFromURL || '');
-    const [sortBy, setSortBy] = useState('newest');
-    const [priceRange, setPriceRange] = useState({ min: '', max: '' });
-    const [showFilters, setShowFilters] = useState(false);
+    const [sortBy,           setSortBy]            = useState('newest');
+    const [priceRange,       setPriceRange]        = useState({ min: '', max: '' });
+    const [showFilters,      setShowFilters]       = useState(false);
 
     const categories = [
-        { id: 'all', name: 'All Products', icon: <FiPackage /> },
-        { id: 'Electronics', name: 'Electronics', icon: <FiPackage /> },
-        { id: 'Clothing & Apparel', name: 'Clothing & Apparel', icon: <FiPackage /> },
-        { id: 'Home & Living', name: 'Home & Living', icon: <FiPackage /> },
-        { id: 'Sports & Outdoors', name: 'Sports & Outdoors', icon: <FiPackage /> },
-        { id: 'Beauty & Personal Care', name: 'Beauty & Personal Care', icon: <FiPackage /> },
-        { id: 'Books & Media', name: 'Books & Media', icon: <FiPackage /> },
-        { id: 'Food & Beverages', name: 'Food & Beverages', icon: <FiPackage /> }
+        { id: 'all',                    name: 'All Products'           },
+        { id: 'Electronics',            name: 'Electronics'            },
+        { id: 'Clothing & Apparel',     name: 'Clothing & Apparel'     },
+        { id: 'Home & Living',          name: 'Home & Living'          },
+        { id: 'Sports & Outdoors',      name: 'Sports & Outdoors'      },
+        { id: 'Beauty & Personal Care', name: 'Beauty & Personal Care' },
+        { id: 'Books & Media',          name: 'Books & Media'          },
+        { id: 'Food & Beverages',       name: 'Food & Beverages'       },
     ];
 
     const sortOptions = [
-        { value: 'newest', label: 'Newest First' },
-        { value: 'price-low', label: 'Price: Low to High' },
-        { value: 'price-high', label: 'Price: High to Low' },
-        { value: 'rating', label: 'Highest Rated' },
-        { value: 'popular', label: 'Most Popular' }
+        { value: 'newest',     label: 'Newest First'        },
+        { value: 'price-low',  label: 'Price: Low to High'  },
+        { value: 'price-high', label: 'Price: High to Low'  },
+        { value: 'rating',     label: 'Highest Rated'       },
+        { value: 'popular',    label: 'Most Popular'        },
     ];
 
     useEffect(() => {
@@ -76,69 +75,41 @@ function Products() {
         const catId = category === 'all' ? '' : category;
         setSelectedCategory(catId);
         setCurrentPage(1);
-        
-        const newSearchParams = new URLSearchParams(location.search);
-        if (catId) {
-            newSearchParams.set('category', catId);
-        } else {
-            newSearchParams.delete('category');
-        }
-        newSearchParams.delete('page');
-        navigate(`?${newSearchParams.toString()}`);
+        const p = new URLSearchParams(location.search);
+        catId ? p.set('category', catId) : p.delete('category');
+        p.delete('page');
+        navigate(`?${p.toString()}`);
     };
 
     const handlePageChange = (page) => {
-        if (page !== currentPage) {
-            setCurrentPage(page);
-            const newSearchParams = new URLSearchParams(location.search);
-            if (page === 1) {
-                newSearchParams.delete('page');
-            } else {
-                newSearchParams.set('page', page);
-            }
-            navigate(`?${newSearchParams.toString()}`);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+        if (page === currentPage) return;
+        setCurrentPage(page);
+        const p = new URLSearchParams(location.search);
+        page === 1 ? p.delete('page') : p.set('page', page);
+        navigate(`?${p.toString()}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    const getProductPrice = (product) => {
-        return product.pricing?.regular || product.price || 0;
-    };
+    const getProductPrice = (product) => product.pricing?.regular || product.price || 0;
 
-    const handleQuickAdd = (productId) => {
-        dispatch(addItemsToCart({ id: productId, quantity: 1 }));
-    };
+    const handleQuickAdd = (productId) => dispatch(addItemsToCart({ id: productId, quantity: 1 }));
 
     const getSortedProducts = () => {
         if (!products || products.length === 0) return [];
-        
-        let sorted = [...products];
-        
+        const sorted = [...products];
         switch (sortBy) {
-            case 'price-low':
-                sorted.sort((a, b) => getProductPrice(a) - getProductPrice(b));
-                break;
-            case 'price-high':
-                sorted.sort((a, b) => getProductPrice(b) - getProductPrice(a));
-                break;
-            case 'rating':
-                sorted.sort((a, b) => (b.ratings || 0) - (a.ratings || 0));
-                break;
-            case 'popular':
-                sorted.sort((a, b) => (b.analytics?.purchases || 0) - (a.analytics?.purchases || 0));
-                break;
-            default:
-                sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            case 'price-low':  sorted.sort((a, b) => getProductPrice(a) - getProductPrice(b)); break;
+            case 'price-high': sorted.sort((a, b) => getProductPrice(b) - getProductPrice(a)); break;
+            case 'rating':     sorted.sort((a, b) => (b.ratings || 0) - (a.ratings || 0)); break;
+            case 'popular':    sorted.sort((a, b) => (b.analytics?.purchases || 0) - (a.analytics?.purchases || 0)); break;
+            default:           sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         }
-        
         return sorted;
     };
 
     const sortedProducts = getSortedProducts();
 
-    if (loading) {
-        return <Loader />;
-    }
+    if (loading) return <Loader />;
 
     return (
         <>
@@ -146,11 +117,12 @@ function Products() {
             <Navbar />
 
             <div className="ep-container">
+
                 {/* Header */}
                 <div className="ep-header">
                     <div className="ep-header-content">
                         <h1 className="ep-title">
-                            {keyword ? `Search Results for "${keyword}"` : 'Our Products'}
+                            {keyword ? `Results for "${keyword}"` : 'Our Products'}
                         </h1>
                         <p className="ep-subtitle">
                             {productCount} {productCount === 1 ? 'product' : 'products'} found
@@ -159,15 +131,17 @@ function Products() {
                 </div>
 
                 <div className="ep-content">
-                    {/* Sidebar Filters */}
+
+                    {/* Sidebar */}
                     <aside className={`ep-sidebar ${showFilters ? 'show' : ''}`}>
                         <div className="ep-sidebar-header">
                             <h3 className="ep-sidebar-title">
                                 <FiFilter /> Filters
                             </h3>
-                            <button 
+                            <button
                                 className="ep-sidebar-close"
                                 onClick={() => setShowFilters(false)}
+                                aria-label="Close filters"
                             >
                                 <FiX />
                             </button>
@@ -180,10 +154,12 @@ function Products() {
                                 {categories.map(cat => (
                                     <button
                                         key={cat.id}
-                                        className={`ep-category-btn ${selectedCategory === (cat.id === 'all' ? '' : cat.id) ? 'active' : ''}`}
+                                        className={`ep-category-btn ${
+                                            selectedCategory === (cat.id === 'all' ? '' : cat.id) ? 'active' : ''
+                                        }`}
                                         onClick={() => handleCategoryClick(cat.id)}
                                     >
-                                        {cat.icon}
+                                        <FiPackage />
                                         <span>{cat.name}</span>
                                     </button>
                                 ))}
@@ -201,7 +177,7 @@ function Products() {
                                     value={priceRange.min}
                                     onChange={(e) => setPriceRange({ ...priceRange, min: e.target.value })}
                                 />
-                                <span className="ep-price-separator">-</span>
+                                <span className="ep-price-separator">–</span>
                                 <input
                                     type="number"
                                     className="ep-price-input"
@@ -212,8 +188,8 @@ function Products() {
                             </div>
                         </div>
 
-                        {/* Clear Filters */}
-                        <button 
+                        {/* Clear */}
+                        <button
                             className="ep-clear-filters"
                             onClick={() => {
                                 setSelectedCategory('');
@@ -225,11 +201,12 @@ function Products() {
                         </button>
                     </aside>
 
-                    {/* Main Content */}
+                    {/* Main */}
                     <div className="ep-main">
+
                         {/* Toolbar */}
                         <div className="ep-toolbar">
-                            <button 
+                            <button
                                 className="ep-filter-toggle"
                                 onClick={() => setShowFilters(!showFilters)}
                             >
@@ -242,10 +219,8 @@ function Products() {
                                     value={sortBy}
                                     onChange={(e) => setSortBy(e.target.value)}
                                 >
-                                    {sortOptions.map(option => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
+                                    {sortOptions.map(o => (
+                                        <option key={o.value} value={o.value}>{o.label}</option>
                                     ))}
                                 </select>
 
@@ -253,12 +228,14 @@ function Products() {
                                     <button
                                         className={`ep-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
                                         onClick={() => setViewMode('grid')}
+                                        aria-label="Grid view"
                                     >
                                         <FiGrid />
                                     </button>
                                     <button
                                         className={`ep-view-btn ${viewMode === 'list' ? 'active' : ''}`}
                                         onClick={() => setViewMode('list')}
+                                        aria-label="List view"
                                     >
                                         <FiList />
                                     </button>
@@ -266,11 +243,11 @@ function Products() {
                             </div>
                         </div>
 
-                        {/* Products Grid/List */}
+                        {/* Products */}
                         {sortedProducts.length > 0 ? (
                             <div className={`ep-products ${viewMode}`}>
                                 {sortedProducts.map((product) => (
-                                    <Product 
+                                    <Product
                                         key={product._id}
                                         product={product}
                                         hideNewBadge={false}
@@ -284,10 +261,9 @@ function Products() {
                                 <FiPackage className="ep-empty-icon" />
                                 <h3>No Products Found</h3>
                                 <p>
-                                    {keyword 
-                                        ? `No products match your search for "${keyword}"`
-                                        : 'No products available in this category'
-                                    }
+                                    {keyword
+                                        ? `No products match "${keyword}"`
+                                        : 'No products available in this category'}
                                 </p>
                             </div>
                         )}
@@ -304,8 +280,8 @@ function Products() {
                                 </button>
 
                                 <div className="ep-page-numbers">
-                                    {[...Array(totalPages)].map((_, index) => {
-                                        const page = index + 1;
+                                    {[...Array(totalPages)].map((_, i) => {
+                                        const page = i + 1;
                                         return (
                                             <button
                                                 key={page}
@@ -331,9 +307,8 @@ function Products() {
                 </div>
             </div>
 
-            {/* Mobile Filter Overlay */}
             {showFilters && (
-                <div 
+                <div
                     className="ep-sidebar-overlay"
                     onClick={() => setShowFilters(false)}
                 />

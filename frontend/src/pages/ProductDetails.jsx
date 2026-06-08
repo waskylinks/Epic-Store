@@ -32,8 +32,6 @@ function ProductDetails() {
     const [userRating, setUserRating] = useState(0);
     const [comment, setComment]       = useState('');
     const [quantity, setQuantity]     = useState(1);
-    // [FIX] null = no manual selection yet; derive the displayed image from
-    // product directly so we never need a setState-in-effect to sync it.
     const [userSelectedImage, setUserSelectedImage] = useState(null);
     const [selectedVariants, setSelectedVariants] = useState({});
     const [activeTab, setActiveTab]   = useState('description');
@@ -103,9 +101,7 @@ function ProductDetails() {
         };
     }, [seo, isSlugRoute]);
 
-
-
-    // ─── Error / success side-effects (no setState in body) ──────────────────
+    // ─── Error / success side-effects ────────────────────────────────────────
     useEffect(() => {
         if (error) {
             toast.error(error.message || error, { position: 'top-center', autoClose: 3000 });
@@ -127,12 +123,6 @@ function ProductDetails() {
     }, [dispatch, success, message]);
 
     // ─── Review success ───────────────────────────────────────────────────────
-    // [FIX] ESLint react-hooks/set-state-in-effect: never call setState
-    // synchronously inside an effect body — it cascades renders.
-    // Solution: the effect only dispatches side-effects (toast, removeSuccess,
-    // re-fetch). The form reset (setUserRating / setComment) is handled by
-    // handleReviewSubmit after a confirmed server success, which is the correct
-    // place for state updates that follow a user action.
     useEffect(() => {
         if (reviewSuccess) {
             toast.success('Review Submitted Successfully', { position: 'top-center', autoClose: 2000 });
@@ -148,8 +138,6 @@ function ProductDetails() {
     // ─── Wishlist derived state ───────────────────────────────────────────────
     const productId = product?._id || id;
 
-    // [FIX] Normalise both populated ({ product: { _id } }) and raw-id shapes —
-    // same pattern as Product.jsx and CartItem.jsx.
     const isInWishlist = wishlistItems.some(wishItem => {
         const wid = wishItem.product?._id || wishItem.product;
         return wid === productId;
@@ -166,25 +154,19 @@ function ProductDetails() {
         }
         try {
             await dispatch(createReviews({ rating: userRating, comment, productID: productId })).unwrap();
-            // [FIX] Reset form here — after confirmed success — not inside the
-            // reviewSuccess effect. This keeps setState out of effect bodies.
             setUserRating(0);
             setComment('');
         } catch {
-            // reviewSuccess effect handles the error toast via the error effect
+            // error handled by error effect
         }
     };
 
-    // [FIX] Drop optimisticAdd / optimisticRemove. The slice now pushes into
-    // state.items on addToWishlist.fulfilled so isInWishlist flips instantly
-    // without a round-trip or manual optimistic layer.
     const handleWishlistToggle = useCallback(async () => {
         if (!isAuthenticated) {
             toast.info('Please login to add to wishlist', { position: 'top-center', autoClose: 2000 });
             navigate('/login');
             return;
         }
-
         try {
             if (isInWishlist) {
                 await dispatch(removeFromWishlist(productId)).unwrap();
@@ -215,9 +197,7 @@ function ProductDetails() {
 
     const addToCart = () => dispatch(addItemsToCart({ id: productId, quantity }));
 
-    // ─── Derived image — no effect needed ────────────────────────────────────
-    // userSelectedImage is null until the user clicks a thumbnail.
-    // Falls back to the product's first image so no setState-in-effect is required.
+    // ─── Derived image ────────────────────────────────────────────────────────
     const images        = product?.images || product?.image || [];
     const defaultImage  = images[0]?.url || '';
     const selectedImage = userSelectedImage ?? defaultImage;
@@ -266,6 +246,8 @@ function ProductDetails() {
             <Navbar />
 
             <div className="epd-container">
+
+                {/* Breadcrumb */}
                 <div className="epd-breadcrumb">
                     <button onClick={() => navigate('/')}>Home</button>
                     <FiChevronRight />
@@ -278,11 +260,16 @@ function ProductDetails() {
                     <span>{product.name}</span>
                 </div>
 
+                {/* Main grid */}
                 <div className="epd-content">
+
+                    {/* Gallery — sticky on desktop */}
                     <div className="epd-gallery">
                         <div className="epd-main-image">
                             <img src={selectedImage} alt={product.name} />
-                            {discount > 0 && <div className="epd-discount-badge">-{discount}%</div>}
+                            {discount > 0 && (
+                                <div className="epd-discount-badge">−{discount}%</div>
+                            )}
                         </div>
                         {images.length > 1 && (
                             <div className="epd-thumbnails">
@@ -299,17 +286,27 @@ function ProductDetails() {
                         )}
                     </div>
 
+                    {/* Info panel */}
                     <div className="epd-info">
-                        <div className="epd-header">
-                            {product.isFeatured   && <span className="epd-badge featured">Featured</span>}
-                            {product.isNewArrival  && <span className="epd-badge new">New Arrival</span>}
-                            {product.isBestseller  && <span className="epd-badge bestseller">Bestseller</span>}
+
+                        {/* Badges */}
+                        {(product.isFeatured || product.isNewArrival || product.isBestseller) && (
+                            <div className="epd-header">
+                                {product.isFeatured   && <span className="epd-badge featured">Featured</span>}
+                                {product.isNewArrival  && <span className="epd-badge new">New Arrival</span>}
+                                {product.isBestseller  && <span className="epd-badge bestseller">Bestseller</span>}
+                            </div>
+                        )}
+
+                        {/* Title + brand */}
+                        <div>
+                            <h1 className="epd-title">{product.name}</h1>
+                            {product.brand && (
+                                <p className="epd-brand">by <span>{product.brand}</span></p>
+                            )}
                         </div>
 
-                        <h1 className="epd-title">{product.name}</h1>
-
-                        {product.brand && <p className="epd-brand">Brand: <span>{product.brand}</span></p>}
-
+                        {/* Rating */}
                         <div className="epd-rating-section">
                             <div className="epd-stars">
                                 {[...Array(5)].map((_, i) => (
@@ -317,8 +314,8 @@ function ProductDetails() {
                                 ))}
                             </div>
                             <span className="epd-rating-text">
-                                {product.ratings?.toFixed(1) || '0.0'} ({product.numOfReviews || 0}{' '}
-                                {product.numOfReviews === 1 ? 'review' : 'reviews'})
+                                {product.ratings?.toFixed(1) || '0.0'} &middot; {product.numOfReviews || 0}{' '}
+                                {product.numOfReviews === 1 ? 'review' : 'reviews'}
                             </span>
                         </div>
 
@@ -326,18 +323,22 @@ function ProductDetails() {
                             <p className="epd-short-description">{product.shortDescription}</p>
                         )}
 
+                        <div className="epd-divider" />
+
+                        {/* Price */}
                         <div className="epd-price-section">
                             {salePrice ? (
                                 <>
                                     <span className="epd-price-sale">{formatPrice(salePrice)}</span>
                                     <span className="epd-price-original">{formatPrice(regularPrice)}</span>
-                                    <span className="epd-save">You save {formatPrice(regularPrice - salePrice)}</span>
+                                    <span className="epd-save">Save {formatPrice(regularPrice - salePrice)}</span>
                                 </>
                             ) : (
                                 <span className="epd-price-current">{formatPrice(regularPrice)}</span>
                             )}
                         </div>
 
+                        {/* Stock + SKU */}
                         <div className="epd-stock-section">
                             <span className={`epd-stock-status ${stock > 0 ? 'in-stock' : 'out-stock'}`}>
                                 {stock > 0
@@ -345,9 +346,12 @@ function ProductDetails() {
                                     : <><FiX /> Out of Stock</>
                                 }
                             </span>
-                            {product.inventory?.sku && <span className="epd-sku">SKU: {product.inventory.sku}</span>}
+                            {product.inventory?.sku && (
+                                <span className="epd-sku">SKU: {product.inventory.sku}</span>
+                            )}
                         </div>
 
+                        {/* Variants */}
                         {product.variants && product.variants.length > 0 && (
                             <div className="epd-variants">
                                 {product.variants.map((variant, vIdx) => (
@@ -361,7 +365,7 @@ function ProductDetails() {
                                                     onClick={() => setSelectedVariants({ ...selectedVariants, [variant.name]: option.value })}
                                                 >
                                                     {option.value}
-                                                    {option.priceModifier > 0 && ` (+${formatPrice(option.priceModifier)})`}
+                                                    {option.priceModifier > 0 && ` +${formatPrice(option.priceModifier)}`}
                                                 </button>
                                             ))}
                                         </div>
@@ -370,6 +374,7 @@ function ProductDetails() {
                             </div>
                         )}
 
+                        {/* Quantity + CTA */}
                         {stock > 0 && (
                             <>
                                 <div className="epd-quantity">
@@ -387,7 +392,8 @@ function ProductDetails() {
                                         onClick={addToCart}
                                         disabled={cartLoading}
                                     >
-                                        <FiShoppingCart /> {cartLoading ? 'Adding...' : 'Add to Cart'}
+                                        <FiShoppingCart />
+                                        {cartLoading ? 'Adding…' : 'Add to Cart'}
                                     </button>
                                     <button
                                         className="epd-btn epd-btn-secondary"
@@ -395,33 +401,47 @@ function ProductDetails() {
                                         disabled={isWishlistBusy}
                                     >
                                         <FiHeart style={{
-                                            fill:  isInWishlist ? '#ff3c3c' : 'none',
-                                            color: isInWishlist ? '#ff3c3c' : 'currentColor',
+                                            fill:  isInWishlist ? '#FF6B6B' : 'none',
+                                            color: isInWishlist ? '#FF6B6B' : 'currentColor',
                                         }} />
                                         {isInWishlist ? 'Saved' : 'Wishlist'}
                                     </button>
-                                    <button className="epd-btn epd-btn-icon"><FiShare2 /></button>
+                                    <button className="epd-btn epd-btn-icon" aria-label="Share">
+                                        <FiShare2 />
+                                    </button>
                                 </div>
                             </>
                         )}
 
+                        {/* Feature strip */}
                         <div className="epd-features">
                             <div className="epd-feature">
                                 <FiTruck className="epd-feature-icon" />
-                                <div><h4>Free Delivery</h4><p>On orders over ₦50,000</p></div>
+                                <div>
+                                    <h4>Free Delivery</h4>
+                                    <p>On orders over ₦50,000</p>
+                                </div>
                             </div>
                             <div className="epd-feature">
                                 <FiShield className="epd-feature-icon" />
-                                <div><h4>Secure Payment</h4><p>100% secure transactions</p></div>
+                                <div>
+                                    <h4>Secure Payment</h4>
+                                    <p>100% secure transactions</p>
+                                </div>
                             </div>
                             <div className="epd-feature">
                                 <FiRefreshCw className="epd-feature-icon" />
-                                <div><h4>Easy Returns</h4><p>30-day return policy</p></div>
+                                <div>
+                                    <h4>Easy Returns</h4>
+                                    <p>30-day return policy</p>
+                                </div>
                             </div>
                         </div>
+
                     </div>
                 </div>
 
+                {/* Tabs */}
                 <div className="epd-tabs-section">
                     <div className="epd-tabs">
                         <button
@@ -502,7 +522,7 @@ function ProductDetails() {
                                         <div className="epd-comment-input">
                                             <label>Your Review</label>
                                             <textarea
-                                                placeholder="Share your experience with this product..."
+                                                placeholder="Share your experience with this product…"
                                                 value={comment}
                                                 onChange={(e) => setComment(e.target.value)}
                                                 required
@@ -510,7 +530,7 @@ function ProductDetails() {
                                             />
                                         </div>
                                         <button type="submit" className="epd-submit-review" disabled={reviewLoading}>
-                                            {reviewLoading ? 'Submitting...' : 'Submit Review'}
+                                            {reviewLoading ? 'Submitting…' : 'Submit Review'}
                                         </button>
                                     </form>
                                 </div>
@@ -524,11 +544,14 @@ function ProductDetails() {
                                                     <div className="epd-review-author">
                                                         <h4>{review.name}</h4>
                                                         {review.verified && (
-                                                            <span className="epd-verified"><FiAward /> Verified Purchase</span>
+                                                            <span className="epd-verified">
+                                                                <FiAward /> Verified Purchase
+                                                            </span>
                                                         )}
                                                     </div>
                                                     <span className="epd-review-date">
-                                                        <FiClock /> {new Date(review.createdAt).toLocaleDateString()}
+                                                        <FiClock />
+                                                        {new Date(review.createdAt).toLocaleDateString()}
                                                     </span>
                                                 </div>
                                                 <div className="epd-review-rating">
@@ -540,13 +563,16 @@ function ProductDetails() {
                                             </div>
                                         ))
                                     ) : (
-                                        <p className="epd-no-reviews">No reviews yet. Be the first to review this product!</p>
+                                        <p className="epd-no-reviews">
+                                            No reviews yet. Be the first to review this product!
+                                        </p>
                                     )}
                                 </div>
                             </div>
                         )}
                     </div>
                 </div>
+
             </div>
 
             <Footer />

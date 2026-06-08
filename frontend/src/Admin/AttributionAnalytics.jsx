@@ -152,14 +152,14 @@ export default function AttributionAnalytics() {
     setRefreshing(true);
     setHasFetched(false);
     Promise.allSettled([
-      // FIX: pass timeframe as a plain string, not an object
-      dispatch(fetchChannelPerformance(timeframe)),
-      dispatch(fetchCampaignPerformance(timeframe)),
-      dispatch(fetchDevicePerformance(timeframe)),
-      dispatch(fetchBrowserPerformance(timeframe)),
-      dispatch(fetchReferrerPerformance(timeframe)),
-      dispatch(fetchAttributionModels(timeframe)),
-      dispatch(fetchLandingPagePerformance(timeframe)),
+
+      dispatch(fetchChannelPerformance({ timeframe })),
+      dispatch(fetchCampaignPerformance({ timeframe })),
+      dispatch(fetchDevicePerformance({ timeframe })),
+      dispatch(fetchBrowserPerformance({ timeframe })),
+      dispatch(fetchReferrerPerformance({ timeframe })),
+      dispatch(fetchAttributionModels({ timeframe })),
+      dispatch(fetchLandingPagePerformance({ timeframe })),
       // ── CHANGE 3 ──────────────────────────────────────────────
       dispatch(fetchAttributionHealth()),
       dispatch(fetchAttributionDrift()),
@@ -237,10 +237,10 @@ export default function AttributionAnalytics() {
   }));
 
   // ── CHANGE 4 ──────────────────────────────────────────────────
-  const confidenceLevels = health?.confidenceDistribution || [];
-  const confHigh   = confidenceLevels.find(c => c.level === 'HIGH')?.count   ?? null;
-  const confMedium = confidenceLevels.find(c => c.level === 'MEDIUM')?.count ?? null;
-  const confLow    = confidenceLevels.find(c => c.level === 'LOW')?.count    ?? null;
+  const confDist   = health?.metrics?.confidence_distribution || {};
+  const confHigh   = confDist.HIGH   ?? null;
+  const confMedium = confDist.MEDIUM ?? null;
+  const confLow    = confDist.LOW    ?? null;
   const confTotal  = (confHigh ?? 0) + (confMedium ?? 0) + (confLow ?? 0);
   const driftAlerts = drift?.driftAlerts || [];
   const hasDriftAlert = driftAlerts.length > 0;
