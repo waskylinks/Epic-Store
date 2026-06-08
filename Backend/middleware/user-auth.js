@@ -11,9 +11,15 @@ export const verifyUserAuth = handleAsyncError(async (req, res, next) => {
     }
 
     const decodedData = jwt.verify(token, process.env.JWT_SECRET_KEY);
+    
     req.user = await User.findById(decodedData.id).select(
-        "+lastSeenDiscountsAt +createdAt +firstName +lastName +email +role +avatar+phone +dateOfBirth +gender"
+        "+lastSeenDiscountsAt +createdAt +firstName +lastName +email +role +avatar +phone +dateOfBirth +gender"
     );
+
+    // Guard: user deleted or token issued against wrong DB
+    if (!req.user) {
+        return next(new HandleError('User not found. Please log in again.', 401));
+    }
 
     next();
 });

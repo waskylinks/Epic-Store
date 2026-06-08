@@ -4,7 +4,7 @@
  * Phase 8 — Observability Routes
  *
  * All routes are admin-only — protected by your existing isAuthenticatedUser
- * and authorizeRoles('admin') middleware.
+ * and authorizeRoles('admin', 'superAdmin') middleware.
  *
  * Mount in app.js:
  *   import analyticsObservabilityRoutes from './routes/analyticsObservabilityRoutes.js';

@@ -61,7 +61,7 @@ const HEALTH_WINDOW_DAYS = 30;
 // a misconfigured route file cannot accidentally expose these endpoints.
 
 const assertAdmin = (req, next) => {
-  if (!req.user || req.user.role !== 'admin') {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superAdmin')) {
     next(new HandleError('Admin access required', 403));
     return false;
   }
