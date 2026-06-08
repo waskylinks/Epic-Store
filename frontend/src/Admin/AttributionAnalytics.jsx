@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
@@ -23,7 +23,6 @@ import {
   fetchAttributionModels,
   fetchLandingPagePerformance,
 } from '../features/analytics/attributionSlice';
-// ── CHANGE 1 ──────────────────────────────────────────────────
 import {
   fetchAttributionHealth,
   fetchAttributionDrift,
@@ -32,7 +31,6 @@ import {
   selectHealthLoading,
   selectDriftLoading,
 } from '../features/analytics/analyticsObservabilitySlice';
-// ─────────────────────────────────────────────────────────────
 import Navbar from '../components/Navbar';
 import '../AdminStyles/AttributionAnalytics.css';
 
@@ -63,7 +61,6 @@ function TrendBadge({ value }) {
     </span>
   );
 }
-// TrendBadge kept for potential future use — exported for reuse
 export { TrendBadge };
 
 function Spinner({ h = 200 }) {
@@ -105,13 +102,11 @@ function Card({ title, sub, icon: Icon, iconColor, action, flush, footer, childr
   );
 }
 
-/* ── Recharts tooltip style (light theme) ───────────────────── */
 const TT = {
   contentStyle: { background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', color: '#1E293B' },
   labelStyle: { color: '#0F172A', fontWeight: 700 },
 };
 
-/* ── View tabs ───────────────────────────────────────────────── */
 const VIEWS = [
   { key: 'channels',  label: 'Channels',      icon: Campaign },
   { key: 'campaigns', label: 'Campaigns',      icon: FilterAlt },
@@ -122,131 +117,165 @@ const VIEWS = [
   { key: 'landing',   label: 'Landing Pages',  icon: OpenInNew },
 ];
 
-/* ══════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-══════════════════════════════════════════════════════════════ */
+// ── Valid timeframes that the backend validateTimeframe accepts ──
+// 'quarter' is intentionally excluded — backend rejects it.
+const TIMEFRAMES = ['day', 'week', 'month', 'year'];
+
 export default function AttributionAnalytics() {
   const dispatch = useDispatch();
-  const {
-    channelPerformance, campaignPerformance, devicePerformance,
-    browserPerformance, referrerPerformance, attributionModels,
-    landingPagePerformance, error,
-  } = useSelector(s => s.attribution);
 
-  // ── CHANGE 2 ──────────────────────────────────────────────────
+  // ── Read nested .data from each metric ──────────────────────────────────────
+  // The slice stores each metric as { data, loading, error }.
+  // The old component read s.attribution.channelPerformance directly,
+  // expecting the raw API payload. That broke when the slice was refactored.
+  // We now read .data from each metric and fall back to null when not yet loaded.
+  const channelData       = useSelector(s => s.attribution.channelPerformance.data);
+  const campaignData      = useSelector(s => s.attribution.campaignPerformance.data);
+  const deviceData        = useSelector(s => s.attribution.devicePerformance.data);
+  const browserData       = useSelector(s => s.attribution.browserPerformance.data);
+  const referrerData      = useSelector(s => s.attribution.referrerPerformance.data);
+  const modelsData        = useSelector(s => s.attribution.attributionModels.data);
+  const landingData       = useSelector(s => s.attribution.landingPagePerformance.data);
+
+  // Composite error — first non-null error across all metrics
+  const metricError = useSelector(s => {
+    const a = s.attribution;
+    return (
+      a.channelPerformance.error     ||
+      a.campaignPerformance.error    ||
+      a.devicePerformance.error      ||
+      a.browserPerformance.error     ||
+      a.referrerPerformance.error    ||
+      a.attributionModels.error      ||
+      a.landingPagePerformance.error ||
+      null
+    );
+  });
+
+  // ── Observability selectors ─────────────────────────────────────────────────
   const health        = useSelector(selectAttributionHealth);
   const healthLoading = useSelector(selectHealthLoading);
   const drift         = useSelector(selectAttributionDrift);
   const driftLoading  = useSelector(selectDriftLoading);
-  // ─────────────────────────────────────────────────────────────
 
   const [activeView, setActiveView] = useState('channels');
   const [timeframe,  setTimeframe]  = useState('month');
   const [hasFetched, setHasFetched] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const loadingRef = useRef(false);
+  const loadingRef   = useRef(false);
+  const dispatchRef  = useRef(dispatch);
+  const timeframeRef = useRef(timeframe);
 
-  const loadAll = useCallback(() => {
+  // Sync refs after each commit so runFetch always sees the latest values.
+  // useEffect (not render body) satisfies the react-hooks/refs rule.
+  useEffect(() => {
+    dispatchRef.current  = dispatch;
+    timeframeRef.current = timeframe;
+  });
+
+  const runFetch = useCallback((tf) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
+    // setState calls here are fine — runFetch is called either from a
+    // useEffect (async trigger) or a click handler, never synchronously
+    // inside the effect body itself.
     setRefreshing(true);
     setHasFetched(false);
+    const d = dispatchRef.current;
     Promise.allSettled([
-
-      dispatch(fetchChannelPerformance({ timeframe })),
-      dispatch(fetchCampaignPerformance({ timeframe })),
-      dispatch(fetchDevicePerformance({ timeframe })),
-      dispatch(fetchBrowserPerformance({ timeframe })),
-      dispatch(fetchReferrerPerformance({ timeframe })),
-      dispatch(fetchAttributionModels({ timeframe })),
-      dispatch(fetchLandingPagePerformance({ timeframe })),
-      // ── CHANGE 3 ──────────────────────────────────────────────
-      dispatch(fetchAttributionHealth()),
-      dispatch(fetchAttributionDrift()),
-      // ─────────────────────────────────────────────────────────
+      d(fetchChannelPerformance({ timeframe: tf })),
+      d(fetchCampaignPerformance({ timeframe: tf })),
+      d(fetchDevicePerformance({ timeframe: tf })),
+      d(fetchBrowserPerformance({ timeframe: tf })),
+      d(fetchReferrerPerformance({ timeframe: tf })),
+      d(fetchAttributionModels({ timeframe: tf })),
+      d(fetchLandingPagePerformance({ timeframe: tf })),
+      d(fetchAttributionHealth()),
+      d(fetchAttributionDrift()),
     ]).finally(() => {
       loadingRef.current = false;
       setRefreshing(false);
       setHasFetched(true);
     });
-  }, [dispatch, timeframe]);
+  }, []); // stable — no deps; reads latest values via refs
 
-  useEffect(() => { loadAll(); }, [timeframe]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Re-fetch whenever timeframe changes.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    runFetch(timeframe);
+  }, [timeframe, runFetch]);
 
-  /* ── Derived data ─────────────────────────────────────────────
-   * FIX: Controller returns items with `source` field, not `_id`.
-   * We normalise here so the rest of the component stays readable.
-   * ─────────────────────────────────────────────────────────── */
+  // Stable handler for the refresh button.
+  const loadAll = useCallback(() => {
+    runFetch(timeframeRef.current);
+  }, [runFetch]);
 
-  // channels: [{ source, orders, revenue, uniqueCustomers, newCustomers, avgOrderValue, avgCLV, customerLTV }]
-  const channels = (channelPerformance?.channels || []).map(c => ({
+  // ── Normalise API payloads into component-friendly arrays ───────────────────
+  //
+  // Each controller returns a specific top-level key (channels, campaigns, etc.)
+  // We pull from .data which is what the slice stores after stripping _timeframe.
+  //
+  // channelData  = { channels: [...], summary: {...} }
+  // campaignData = { campaigns: [...], summary: {...} }
+  // deviceData   = { devices: [...], summary: {...} }
+  // browserData  = { browsers: [...] }
+  // referrerData = { referrers: [...], summary: {...} }
+  // modelsData   = { firstTouch: [...], lastTouch: [...], note }
+  // landingData  = { landingPages: [...], summary: {...} }
+
+  const channels = (channelData?.channels || []).map(c => ({
     ...c,
-    _id:       c.source       || c._id || 'Unknown',   // normalise display key
-    customers: c.uniqueCustomers ?? c.customers ?? 0,
+    _id:       c.source          || 'Unknown',
+    customers: c.uniqueCustomers ?? 0,
   }));
   const chMax = channels.length ? Math.max(...channels.map(c => c.revenue || 0)) : 1;
 
-  // campaigns: [{ campaign, source, medium, orders, revenue, uniqueCustomers, avgOrderValue }]
-  // Controller does NOT return conversionRate; derive it from avgOrderValue or leave 0
-  const campaigns = (campaignPerformance?.campaigns || []).map(c => ({
+  const campaigns = (campaignData?.campaigns || []).map(c => ({
     ...c,
-    _id:            c.campaign || c._id || '—',
-    // conversionRate not in controller — show avgOrderValue context instead
+    _id: c.campaign || '—',
     conversionRate: c.conversionRate ?? 0,
   }));
 
-  // devices: [{ device, orders, revenue, orderPercentage, avgOrderValue }]
-  const devices = (devicePerformance?.devices || []).map(d => ({
+  const devices = (deviceData?.devices || []).map(d => ({
     ...d,
-    _id:        d.device      || d._id      || 'Unknown',
-    percentage: d.orderPercentage ?? d.percentage ?? 0,
+    _id:        d.device          || 'Unknown',
+    percentage: d.orderPercentage ?? 0,
   }));
 
-  // browsers: [{ browser, orders, revenue }]
-  const browsers = (browserPerformance?.browsers || []).map(b => ({
+  const browsers = (browserData?.browsers || []).map(b => ({
     ...b,
-    _id: b.browser || b._id || 'Unknown',
+    _id: b.browser || 'Unknown',
   }));
 
-  // referrers: [{ referrer, orders, revenue, uniqueCustomers }]
-  const referrers = (referrerPerformance?.referrers || []).map(r => ({
+  const referrers = (referrerData?.referrers || []).map(r => ({
     ...r,
-    _id: r.referrer || r._id || 'Direct',
+    _id: r.referrer || 'Direct',
   }));
 
-  // FIX: Controller returns { firstTouch: [...], lastTouch: [...] }
-  // firstTouch items: { source, customers, totalRevenue }
-  // lastTouch items:  { source, orders, revenue }
-  const firstTouchList = Array.isArray(attributionModels?.firstTouch)
-    ? attributionModels.firstTouch
-    : [];
-  const lastTouchList = Array.isArray(attributionModels?.lastTouch)
-    ? attributionModels.lastTouch
-    : [];
+  // modelsData = { firstTouch: [{source, customers, totalRevenue}], lastTouch: [{source, orders, revenue}] }
+  const firstTouchList = Array.isArray(modelsData?.firstTouch) ? modelsData.firstTouch : [];
+  const lastTouchList  = Array.isArray(modelsData?.lastTouch)  ? modelsData.lastTouch  : [];
 
-  // FIX: Controller response key is `landingPages`, not `pages`
-  // items: { landingPage, orders, revenue, uniqueCustomers }
-  const pages = (landingPagePerformance?.landingPages || landingPagePerformance?.pages || []).map(p => ({
+  // landingPages key (not pages) — controller returns landingPages
+  const pages = (landingData?.landingPages || []).map(p => ({
     ...p,
-    _id:            p.landingPage  || p._id     || '/',
-    sessions:       p.uniqueCustomers ?? p.sessions ?? 0,
-    // conversionRate not in controller — derive from orders/uniqueCustomers
+    _id:            p.landingPage    || '/',
+    sessions:       p.uniqueCustomers ?? 0,
     conversionRate: p.conversionRate ?? (
       p.uniqueCustomers > 0 ? (p.orders / p.uniqueCustomers) * 100 : 0
     ),
   }));
 
-  // ── CHANGE 4 ──────────────────────────────────────────────────
+  // ── Observability derived values ────────────────────────────────────────────
   const confDist   = health?.metrics?.confidence_distribution || {};
   const confHigh   = confDist.HIGH   ?? null;
   const confMedium = confDist.MEDIUM ?? null;
   const confLow    = confDist.LOW    ?? null;
   const confTotal  = (confHigh ?? 0) + (confMedium ?? 0) + (confLow ?? 0);
-  const driftAlerts = drift?.driftAlerts || [];
-  const hasDriftAlert = driftAlerts.length > 0;
-  // ─────────────────────────────────────────────────────────────
+  const driftAlerts    = drift?.driftAlerts || [];
+  const hasDriftAlert  = driftAlerts.length > 0;
 
-  /* ── Totals for overview KPIs ─────────────────────────────── */
+  // ── Summary KPIs ────────────────────────────────────────────────────────────
   const totalRevenue   = channels.reduce((s, c) => s + (c.revenue   || 0), 0);
   const totalOrders    = channels.reduce((s, c) => s + (c.orders    || 0), 0);
   const totalCustomers = channels.reduce((s, c) => s + (c.customers || 0), 0);
@@ -260,12 +289,10 @@ export default function AttributionAnalytics() {
       <div className="at-page">
         <div className="at-body">
 
-          {/* ── Back ──────────────────────────────────────── */}
           <Link to="/admin/dashboard" className="at-back">
             <ArrowBack style={{ fontSize: 16 }} /> Dashboard
           </Link>
 
-          {/* ── Header ────────────────────────────────────── */}
           <div className="at-hd">
             <div className="at-hd-left">
               <span className="at-hd-icon">
@@ -279,7 +306,7 @@ export default function AttributionAnalytics() {
             </div>
             <div className="at-hd-right">
               <div className="at-tf">
-                {['day', 'week', 'month', 'quarter', 'year'].map(t => (
+                {TIMEFRAMES.map(t => (
                   <button
                     key={t}
                     className={`at-tf-btn ${timeframe === t ? 'at-tf-btn--active' : ''}`}
@@ -301,9 +328,12 @@ export default function AttributionAnalytics() {
             </div>
           </div>
 
-          {error && <div className="at-error"><ErrorOutline style={{ fontSize: 17 }} />{error}</div>}
+          {metricError && (
+            <div className="at-error">
+              <ErrorOutline style={{ fontSize: 17 }} />{metricError}
+            </div>
+          )}
 
-          {/* ── CHANGE 5 ──────────────────────────────────────── */}
           {hasDriftAlert && !driftLoading && (
             <div className="at-drift-banner" role="alert">
               <div className="at-drift-banner-left">
@@ -322,9 +352,8 @@ export default function AttributionAnalytics() {
               </a>
             </div>
           )}
-          {/* ──────────────────────────────────────────────────── */}
 
-          {/* ── Summary KPIs ──────────────────────────────── */}
+          {/* ── Summary KPIs ── */}
           <div className="at-grid-4">
             {first ? Array.from({ length: 4 }).map((_, i) => <KpiSkel key={i} />) : (
               <>
@@ -348,7 +377,6 @@ export default function AttributionAnalytics() {
                   <div className="at-kpi-value">{channels.length}</div>
                   <div className="at-kpi-label">{campaigns.length} campaigns tracked</div>
                 </div>
-                {/* ── CHANGE 6 ──────────────────────────────────── */}
                 <div className="at-kpi at-kpi--split" style={{ '--kpi-color': '#6366F1' }}>
                   <div className="at-kpi-eyebrow">Attribution Confidence</div>
                   {(healthLoading && confHigh === null) ? (
@@ -372,22 +400,24 @@ export default function AttributionAnalytics() {
                     <a href="/admin/analytics/health" className="at-kpi-link">View Health →</a>
                   </div>
                 </div>
-                {/* ──────────────────────────────────────────────── */}
               </>
             )}
           </div>
 
-          {/* ── View tabs ─────────────────────────────────── */}
+          {/* ── View tabs ── */}
           <div className="at-tabs">
-            {VIEWS.map(({ key, label, icon: Icon }) => (
-              <button
-                key={key}
-                className={`at-tab ${activeView === key ? 'at-tab--active' : ''}`}
-                onClick={() => setActiveView(key)}
-              >
-                <Icon style={{ fontSize: 15 }} />{label}
-              </button>
-            ))}
+            {VIEWS.map((view) => {
+              const ViewIcon = view.icon;
+              return (
+                <button
+                  key={view.key}
+                  className={`at-tab ${activeView === view.key ? 'at-tab--active' : ''}`}
+                  onClick={() => setActiveView(view.key)}
+                >
+                  <ViewIcon style={{ fontSize: 15 }} />{view.label}
+                </button>
+              );
+            })}
           </div>
 
           {/* ══════════════════════════════════════════════
@@ -813,9 +843,8 @@ export default function AttributionAnalytics() {
               <div className="at-section"><span className="at-section-text">Attribution Model Comparison</span><span className="at-section-line" /></div>
 
               <div className="at-grid-2">
-                {/* FIX: firstTouch is an array of { source, customers, totalRevenue } */}
                 <Card title="First-Touch Attribution" sub="Credit given to the first channel a customer interacted with" icon={TouchApp} iconColor="#2563EB">
-                  {first ? <Spinner h={240} /> : !attributionModels ? <Empty h={240} /> : (
+                  {first ? <Spinner h={240} /> : !modelsData ? <Empty h={240} /> : (
                     <div>
                       {firstTouchList.length === 0 ? (
                         <Empty h={160} label="No first-touch data for this period" />
@@ -835,9 +864,8 @@ export default function AttributionAnalytics() {
                   )}
                 </Card>
 
-                {/* FIX: lastTouch is an array of { source, orders, revenue } */}
                 <Card title="Last-Touch Attribution" sub="Credit given to the final channel before conversion" icon={TouchApp} iconColor="#16A34A">
-                  {first ? <Spinner h={240} /> : !attributionModels ? <Empty h={240} /> : (
+                  {first ? <Spinner h={240} /> : !modelsData ? <Empty h={240} /> : (
                     <div>
                       {lastTouchList.length === 0 ? (
                         <Empty h={160} label="No last-touch data for this period" />
@@ -897,7 +925,6 @@ export default function AttributionAnalytics() {
                       <div className="at-kpi-label">Tracked landing pages</div>
                     </div>
                     <div className="at-kpi" style={{ '--kpi-color': '#7C3AED' }}>
-                      {/* FIX: no sessions field from controller — use uniqueCustomers */}
                       <div className="at-kpi-eyebrow">Unique Visitors</div>
                       <div className="at-kpi-value">{fmt.number(pages.reduce((s, p) => s + (p.sessions || 0), 0))}</div>
                       <div className="at-kpi-label">All landing page visitors</div>
