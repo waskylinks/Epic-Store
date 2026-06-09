@@ -141,9 +141,18 @@ export const sendGA4CheckoutStep = async (step, checkout, context = {}) => {
   const GA4_STEP_MAP = {
     shipping_info:      'begin_checkout',
     payment_selection:  'add_payment_info',
+    cart:               'begin_checkout',
   };
 
-  const eventName = GA4_STEP_MAP[step] || 'checkout_step';
+  const eventName = GA4_STEP_MAP[step];
+  
+  if (!eventName) {
+    return {
+      success: true,
+      skipped: true,
+      reason: `no_ga4_mapping_for_step_${step}`
+    };
+  }
 
   const items = (checkout.items || []).map((item, index) => ({
     item_id:  item.product?.toString() || `item_${index}`,

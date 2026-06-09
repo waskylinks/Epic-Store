@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
 import User from '../models/userModel.js';
@@ -552,18 +553,18 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
 // ANALYTICS (customer-facing)
 // ============================================
 
-// FIX: Replaced Order.find() + in-memory reduce with a MongoDB aggregation pipeline.
-// The original code fetched full order documents — including orderItems, paymentMeta,
-// paymentInfo, and all analytics sub-documents — into Node.js memory just to compute
-// four aggregate numbers. For users with large order histories this is a significant
-// memory and latency problem. The pipeline pushes all arithmetic to MongoDB and returns
-// a single lightweight document. $facet is used so that min/max date and the filtered
-// counts (refunded, returned, cancelled) are computed in one round-trip.
+
 export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next) => {
   const { userId } = req.params;
 
+  // Guard: Validate ObjectId format before querying
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return next(new HandleError('Invalid user ID', 400));
+  }
+
   const [result] = await Order.aggregate([
-    { $match: { user: userId } },
+    { $match: { user: new mongoose.Types.ObjectId(userId) } },
+    
     {
       $facet: {
         totals: [

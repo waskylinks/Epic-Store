@@ -170,24 +170,28 @@ export const refreshSession = () => {
  *
  * Call once on app mount before any routing occurs.
  */
+
 export const captureUTMsOnLoad = () => {
   try {
-    const sentinelRaw = localStorage.getItem(KEYS.UTM_CAPTURED);
-    if (sentinelRaw) {
-      try {
-        const { ts } = JSON.parse(sentinelRaw);
-        const age    = Date.now() - ts;
-        if (age < UTM_CAPTURED_TTL_MS) {
-          // Sentinel is fresh — first-touch already recorded for this window.
-          return;
+    const params = new URLSearchParams(window.location.search);
+    const freshSource = params.get('utm_source');
+
+    // If fresh UTM params are present on this URL, always recapture —
+    // a new paid ad click must overwrite the prior first-touch sentinel.
+    // The sentinel only blocks recapture when the landing URL has NO UTMs,
+    // preventing mid-session page navigations from resetting attribution.
+    if (!freshSource) {
+      const sentinelRaw = localStorage.getItem(KEYS.UTM_CAPTURED);
+      if (sentinelRaw) {
+        try {
+          const { ts } = JSON.parse(sentinelRaw);
+          if (Date.now() - ts < UTM_CAPTURED_TTL_MS) return;
+        } catch {
+          // Corrupt sentinel — fall through to recapture
         }
-        // Sentinel is stale — fall through to re-capture.
-      } catch {
-        // Corrupt sentinel (e.g. legacy '1' string from old builds) — fall through.
       }
     }
 
-    const params = new URLSearchParams(window.location.search);
     const utmMap = {
       [KEYS.UTM_SOURCE]:   params.get('utm_source'),
       [KEYS.UTM_MEDIUM]:   params.get('utm_medium'),
@@ -196,12 +200,20 @@ export const captureUTMsOnLoad = () => {
       [KEYS.UTM_CONTENT]:  params.get('utm_content'),
     };
 
+    // Clear stale UTM keys before writing new ones so old Google UTMs
+    // don't bleed through when the new URL only has some params set.
+    if (freshSource) {
+      Object.values(KEYS).filter(k => k.startsWith('epic_utm')).forEach(k =>
+        localStorage.removeItem(k)
+      );
+      localStorage.removeItem(KEYS.LANDING_PAGE);
+    }
+
     Object.entries(utmMap).forEach(([key, value]) => {
       if (value) localStorage.setItem(key, value);
     });
 
     localStorage.setItem(KEYS.LANDING_PAGE, window.location.pathname + window.location.search);
-    // Store sentinel with a timestamp so future calls can check its age.
     localStorage.setItem(KEYS.UTM_CAPTURED, JSON.stringify({ ts: Date.now() }));
 
   } catch (err) {
@@ -267,8 +279,23 @@ const getClickId = (key, expiryDays) => {
  * NOTE: Does not call refreshSession(). Callers that represent real user events
  * should call refreshSession() separately after calling getAttributionContext().
  */
+
 export const getAttributionContext = () => {
   try {
+        const ua = navigator.userAgent || '';
+
+        const device = /tablet|ipad|(android(?!.*mobile))/i.test(ua) ? 'tablet'
+                    : /mobile|android|iphone|ipod|blackberry|iemobile|opera mini/i.test(ua) ? 'mobile'
+                    : 'desktop';
+
+        const browser = /samsungbrowser/i.test(ua) ? 'Samsung Internet'
+                      : /edg\//i.test(ua)           ? 'Edge'
+                      : /opr\//i.test(ua)           ? 'Opera'
+                      : /chrome/i.test(ua)          ? 'Chrome'
+                      : /firefox/i.test(ua)         ? 'Firefox'
+                      : /safari/i.test(ua)          ? 'Safari'
+                      : 'unknown';
+                      
     return {
       utm_source:   localStorage.getItem(KEYS.UTM_SOURCE)   || null,
       utm_medium:   localStorage.getItem(KEYS.UTM_MEDIUM)   || null,
@@ -282,6 +309,8 @@ export const getAttributionContext = () => {
       msclkid:      getClickId(KEYS.MSCLKID, 90),
       sessionId:    getOrCreateSessionId(),
       capturedAt:   new Date().toISOString(),
+      device,
+      browser,
     };
   } catch (err) {
     console.warn('[Analytics] getAttributionContext failed:', err.message);
@@ -355,9 +384,10 @@ export const getGA4ClientId = () => {
  * The fix: when _fbc cookie is absent, format the raw fbclid here at the source
  * so that every consumer of req.body.fbc receives a correctly structured value.
  */
+
 const formatFbc = (rawFbclid) => {
   if (!rawFbclid) return null;
-  return `fb.1.${Date.now()}.${rawFbclid}`;
+  return `fb.1.${Math.floor(Date.now() / 1000)}.${rawFbclid}`;
 };
 
 // ─── CLIENT ANALYTICS PAYLOAD BUILDER ────────────────────────────────────────

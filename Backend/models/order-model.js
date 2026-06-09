@@ -41,6 +41,7 @@ const orderSchema = new mongoose.Schema(
         price: Number,
         quantity: Number,
         image: String,
+        category: String,
         quantityOrdered: Number,
         quantityShipped: { type: Number, default: 0 },
         quantityBackordered: { type: Number, default: 0 },

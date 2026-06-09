@@ -190,7 +190,9 @@ app.use('/api/v1', returnRoutes);
 app.use('/api/v1/receipts', receiptRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
 app.use('/api/v1/cart', cartRoutes);
-app.use('/api/v1', cartRoutes);
+
+
+
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/discounts', discountRoutes);
 app.use('/api/v1/recovery', recoveryEmailRoutes);

@@ -220,7 +220,7 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
   sendEvent(ANALYTICS_EVENTS.CHECKOUT_STEP || 'checkout_step', {
     step:         'cart',
     cart_value:   cartContext.cartValue  || null,
-    item_count:   cartContext.itemCount  || null,
+    item_count:   cartContext.itemCount  ?? null,
     has_discount: cartContext.hasDiscount ?? false,
   }, id);
 
@@ -233,18 +233,7 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
  * Fire when a user enters a checkout step.
  * Steps: "shipping_info" | "payment_selection" | "payment_gateway"
  *
- * [FIX] eventId is now an optional third parameter.
- *
- * WHY: checkoutSlice.updateCheckoutStep generates a UUID and sends it to
- * the backend as req.body.analyticsEventId (for server CAPI deduplication).
- * The same UUID is returned in the fulfilled payload and passed here so the
- * browser AddPaymentInfo pixel and the server CAPI AddPaymentInfo event share
- * the same event_id — Meta deduplicates them and shows "Deduped" in Events
- * Manager rather than counting two payment events per checkout.
- *
- * When called without an eventId (e.g. from other callers), a fresh UUID is
- * generated — the same safe behaviour as before this fix. The change is purely
- * additive and backward-compatible.
+
  *
  * [RETAINED] AddPaymentInfo fires only on payment_selection, not on
  * payment_gateway, to prevent double-counting the funnel metric.
@@ -254,9 +243,6 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
  * @param {string} [eventId]   - Optional shared UUID from updateCheckoutStep thunk
  */
 export const trackCheckoutStep = (step, cartContext = {}, eventId) => {
-  // [FIX] Use the provided eventId when available so the browser pixel and
-  // server CAPI event share the same deduplication key. Fall back to a fresh
-  // UUID for callers that don't provide one (backward-compatible).
   const id = eventId || generateEventId();
 
   // [RETAINED] Fire AddPaymentInfo only on the first payment step, not on
@@ -280,7 +266,7 @@ export const trackCheckoutStep = (step, cartContext = {}, eventId) => {
   sendEvent(ANALYTICS_EVENTS.CHECKOUT_STEP || 'checkout_step', {
     step,
     cart_value:   cartContext.cartValue  || null,
-    item_count:   cartContext.itemCount  || null,
+    item_count:   cartContext.itemCount  ?? null,
     has_discount: cartContext.hasDiscount ?? false,
   }, id);
 };

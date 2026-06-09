@@ -47,8 +47,14 @@ export const formatFbc = (fbclid) => {
  * @param {Object} context - Analytics context
  * @returns {string|null}
  */
+
 export const resolveFbc = (context = {}) => {
-  if (context.fbc)                 return context.fbc;
+  if (context.fbc) {
+    // Validate subversion — Meta requires fb.1., not fb.0.
+    // Pass through only if already correctly formatted.
+    if (context.fbc.startsWith('fb.1.')) return context.fbc;
+    // fb.0. or other malformed values — fall through to reformatting
+  }
   if (context.fbclid)              return formatFbc(context.fbclid);
   if (context.attribution?.fbclid) return formatFbc(context.attribution.fbclid);
   return null;

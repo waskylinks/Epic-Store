@@ -235,7 +235,7 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}, override
   const context = {
     eventId:        analyticsEvent.event_id,
     userId:         user?._id?.toString() || req?.user?._id?.toString() || null,
-    clientId:       ga4ClientId || req?.sessionId,
+    clientId:       ga4ClientId || null,
     sessionId:      req?.sessionId || null,
     fbp,
     fbc,

@@ -50,6 +50,14 @@ const CLIENT_ONLY_EVENT_TYPES = new Set([
  * No roleBaseAccess guard — this endpoint is called during normal
  * shopping flows (add_to_cart, checkout_step, purchase, etc.).
  *
+ * ATTRIBUTION NOTE:
+ *   This route is listed in BYPASS_PATHS in attributionMiddleware.js, so
+ *   req.attribution is the null-fallback object (source: 'direct',
+ *   landingPage: req.originalUrl). It is NOT meaningful here — the POST
+ *   request itself carries no UTM query params and req.originalUrl is
+ *   "/api/v1/analytics/event". clientAttribution, captured at page-load
+ *   time by the browser SDK, is the correct attribution source.
+ *
  * @route POST /api/v1/analytics/event
  * @access Private (any authenticated user)
  */
@@ -58,7 +66,7 @@ export const ingestAnalyticsEvent = handleAsyncError(async (req, res, next) => {
     eventType,
     analyticsEventId,
     clientTimestamp,
-    properties      = {},
+    properties        = {},
     clientAttribution = {},
     ga4ClientId,
     fbp,
@@ -91,8 +99,45 @@ export const ingestAnalyticsEvent = handleAsyncError(async (req, res, next) => {
   const resolvedFbc = resolveFbc({
     fbc,
     fbclid: fbclid || clientAttribution?.fbclid || null,
-    attribution: req.attribution || clientAttribution,
+    attribution: clientAttribution,
   });
+
+  // ── Resolve attribution ───────────────────────────────────────────────────
+  // clientAttribution was captured at page-load time by the browser SDK and
+  // carries the real first-touch signals (UTMs, landing page, click IDs).
+  //
+  // req.attribution on this endpoint is computed from the POST request itself:
+  //   - No UTM query params (they're in the POST body, not the URL)
+  //   - req.originalUrl = "/api/v1/analytics/event"
+  //   - referrer = the SPA page the user was on, not the original landing page
+  //
+  // Because this route is in BYPASS_PATHS, req.attribution is the null-fallback
+  // object and must not be used as the attribution source here.
+  //
+  // Device/browser: prefer client-reported values (accurate for SPA navigation);
+  // fall back to server UA detection for the rare case clientAttribution is empty.
+  //
+  // Confidence fields are server-computed signals that are only meaningful on
+  // requests that carry real UTM/click-ID cookies (payment, order endpoints).
+  // They are intentionally null here — the queue worker and BigQuery readers
+  // treat null confidence as an unscored client event.
+  const resolvedAttribution = {
+    source:             clientAttribution?.utm_source   || 'direct',
+    medium:             clientAttribution?.utm_medium   || null,
+    campaign:           clientAttribution?.utm_campaign || null,
+    referrer:           clientAttribution?.referrer     || null,
+    landing_page:       clientAttribution?.landing_page || null,
+    gclid:              clientAttribution?.gclid        || null,
+    fbclid:             clientAttribution?.fbclid       || null,
+    ttclid:             clientAttribution?.ttclid       || null,
+    msclkid:            clientAttribution?.msclkid      || null,
+    device:             clientAttribution?.device       || req.attribution?.device  || 'desktop',
+    browser:            clientAttribution?.browser      || req.attribution?.browser || 'unknown',
+    confidenceScore:    null,
+    confidenceLevel:    'LOW',
+    isReconstructed:    false,
+    reconstructionRule: null,
+  };
 
   // ── Build queue payload ──────────────────────────────────────────────────
   const payload = {
@@ -110,14 +155,18 @@ export const ingestAnalyticsEvent = handleAsyncError(async (req, res, next) => {
 
     properties,
 
+    // Top-level attribution is read by transformToEventRow() and
+    // transformToAttributionSnapshotRow() in bigQueryService.js.
+    attribution: resolvedAttribution,
+
     context: {
-      fbp:            fbp  || null,
+      fbp:            fbp || null,
       fbc:            resolvedFbc,
       ga4ClientId:    ga4ClientId || null,
       clientIp:       req.ip,
       userAgent:      req.headers['user-agent'] || null,
       eventSourceUrl: req.headers.referer || process.env.FRONTEND_URL || null,
-      attribution:    req.attribution || clientAttribution,
+      attribution:    resolvedAttribution,
     },
 
     schema_version: '1.0',

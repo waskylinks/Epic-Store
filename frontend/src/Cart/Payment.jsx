@@ -169,9 +169,14 @@ function Payment() {
 
     (async () => {
       try {
+        // FIX 1: Include cartContext in the payment_selection dispatch
         await dispatch(updateCheckoutStep({
           checkoutId,
           step: "payment_selection",
+          cartContext: {
+            itemCount:   checkoutSession?.items?.length ?? cartItems.length,
+            hasDiscount: discount.applied || false,
+          },
         })).unwrap();
       } catch (err) {
         console.warn("[Payment] Failed to record payment_selection step:", err);
@@ -378,10 +383,15 @@ function Payment() {
     // (set on mount). After this the abandonment step is payment_gateway.
     if (checkoutId) {
       try {
+        // FIX 2: Include cartContext and gateway in the payment_gateway dispatch
         await dispatch(updateCheckoutStep({
           checkoutId,
           step:    "payment_gateway",
-          gateway: selectedGateway
+          gateway: selectedGateway,
+          cartContext: {
+            itemCount:   checkoutSession?.items?.length ?? cartItems.length,
+            hasDiscount: discount.applied || false,
+          },
         })).unwrap();
       } catch (err) {
         console.warn("[Payment] Failed to record payment_gateway step:", err);

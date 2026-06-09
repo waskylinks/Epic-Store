@@ -71,6 +71,7 @@ const BYPASS_PATHS = [
   '/api/v1/receipts',
   '/api/v1/shipping/rates',
   '/api/v1/shipping/carriers',
+  '/api/v1/analytics/event',
   '/sitemap',
   '/robots.txt',
   '/favicon',
