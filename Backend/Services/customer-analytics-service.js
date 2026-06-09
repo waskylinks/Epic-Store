@@ -10,6 +10,21 @@ import Discount from "../models/discount-model.js";
  */
 
 // ============================================
+// NORMALIZE ACQUISITION SOURCE
+// ============================================
+
+const normalizeAcquisitionSource = (source) => {
+  if (!source) return 'direct';
+  const s = source.toLowerCase();
+  if (['organic', 'likely_organic', 'google', 'bing', 'yahoo', 'duckduckgo', 'baidu', 'yandex'].includes(s)) return 'organic';
+  if (['paid', 'google_ads', 'meta_ads', 'tiktok_ads', 'bing_ads', 'twitter_ads', 'linkedin_ads', 'pinterest_ads', 'snapchat_ads', 'amazon_ads', 'taboola', 'outbrain', 'criteo', 'likely_retargeting'].includes(s)) return 'paid';
+  if (['social', 'facebook', 'instagram', 'meta', 'twitter', 'x', 'tiktok', 'snapchat', 'pinterest', 'linkedin', 'youtube', 'reddit', 'whatsapp', 'telegram', 'threads', 'discord', 'dark_social'].includes(s)) return 'social';
+  if (['email', 'klaviyo', 'mailchimp', 'sendgrid', 'hubspot', 'newsletter', 'likely_email_or_social'].includes(s)) return 'email';
+  if (['referral', 'affiliate', 'influencer', 'partner'].includes(s)) return 'referral';
+  return 'direct';
+};
+
+// ============================================
 // SYNC CUSTOMER ANALYTICS
 // ============================================
 
@@ -56,9 +71,9 @@ export const syncCustomerAnalytics = async (userId) => {
  
     if (orders.length > 0 && !customerAnalytics.acquisition.source) {
       const firstOrder = orders[0];
-      customerAnalytics.acquisition.source   = firstOrder.analytics?.source || "direct";
-      customerAnalytics.acquisition.medium   = firstOrder.analytics?.medium;
-      customerAnalytics.acquisition.campaign = firstOrder.analytics?.campaign;
+      customerAnalytics.acquisition.source   = normalizeAcquisitionSource(firstOrder.analytics?.source);
+      customerAnalytics.acquisition.medium   = firstOrder.analytics?.medium   || null;
+      customerAnalytics.acquisition.campaign = firstOrder.analytics?.campaign || null;
     }
  
     customerAnalytics.risk.cancelledOrders          = cancelledOrders;

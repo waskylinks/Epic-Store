@@ -137,7 +137,7 @@ const buildClickIdCookieOptions = (maxAge) => ({
 const UTM_COOKIE_OPTIONS = {
   httpOnly: true,
   secure:   process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  sameSite: 'lax',
   maxAge:   UTM_COOKIE_TTL,
 };
 
@@ -285,10 +285,33 @@ export const trackAttribution = (req, res, next) => {
 
     const hasReferrer = !!referer;
 
+    // In a SPA the landing page request never reaches Express, so UTM query
+    // params and click IDs from the landing URL are never in req.query on
+    // API requests. clientAttribution, built by the browser SDK at landing
+    // time and sent in the request body, is the only reliable source for
+    // these signals. Only available on POST/PUT — GET requests have no body.
+    const clientAttribution = req.body?.clientAttribution || null;
+
+    const hasClientUTM = !!(
+      clientAttribution?.utm_source &&
+      clientAttribution.utm_source !== 'direct'
+    );
+    const hasClientClickId = !!(
+      clientAttribution?.gclid  ||
+      clientAttribution?.fbclid ||
+      clientAttribution?.ttclid ||
+      clientAttribution?.msclkid
+    );
+
+    // Merge — server cookie signals take precedence where present,
+    // client body signals fill the gap for SPA landing attribution.
+    const effectiveHasUTM     = hasUTM     || hasClientUTM;
+    const effectiveHasClickId = hasClickId || hasClientClickId;
+
     // ── Compute confidence score ──────────────────────────────────────────────
     const { score: confidenceScore, level: confidenceLevel } = computeConfidence({
-      hasClickId,
-      hasUTM,
+      hasClickId:        effectiveHasClickId,
+      hasUTM:            effectiveHasUTM,
       hasReferrer,
       sessionContinuity,
     });
@@ -305,8 +328,8 @@ export const trackAttribution = (req, res, next) => {
 
     if (
       confidenceLevel === 'LOW' &&
-      !hasUTM &&
-      !hasClickId &&
+      !effectiveHasUTM &&
+      !effectiveHasClickId &&
       !hasReferrer &&
       !hasUTMCookieEvidence
     ) {
@@ -339,11 +362,11 @@ export const trackAttribution = (req, res, next) => {
 
     // ── Assemble req.attribution ──────────────────────────────────────────────
     req.attribution = {
-      source:   reconstructedSource || utms.source || 'direct',
-      medium:   reconstructedMedium || utms.medium || null,
-      campaign: utms.campaign || null,
-      term:     utms.term     || null,
-      content:  utms.content  || null,
+      source:   reconstructedSource || utms.source || clientAttribution?.utm_source || 'direct',
+      medium:   reconstructedMedium || utms.medium || clientAttribution?.utm_medium || null,
+      campaign: utms.campaign || clientAttribution?.utm_campaign || null,
+      term:     utms.term     || clientAttribution?.utm_term     || null,
+      content:  utms.content  || clientAttribution?.utm_content  || null,
       referrer:    referer,
       landingPage,
       device,

@@ -4,11 +4,6 @@ import { abandonCheckout, selectCheckoutId } from '../features/checkout/checkout
 
 const ABANDON_GRACE_MS = 800;
 
-// FIX (beforeunload async): Build the beacon payload once so sendBeacon can
-// fire synchronously and reliably on page unload. axios.put cannot complete
-// in a beforeunload handler — the browser may terminate the page before the
-// XHR is sent. navigator.sendBeacon is specifically designed for fire-and-
-// forget delivery on unload and is not subject to the same termination race.
 const buildBeaconPayload = (checkoutId, step) =>
   new Blob(
     [JSON.stringify({ checkoutId, step, reason: 'beforeunload' })],
