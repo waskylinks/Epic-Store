@@ -44,9 +44,11 @@ export const syncCustomerAnalytics = async (userId) => {
       throw new Error(`User ${userId} not found`);
     }
  
+    // FIX: Include all non-cancelled/non-returned orders for accurate CLV calculation
+    // Excluding only "Cancelled" and "Returned" as these represent truly lost revenue
     const orders = await Order.find({
       user:              userId,
-      orderStatus:       { $in: ["Delivered", "Shipped"] },
+      orderStatus:       { $nin: ["Cancelled", "Returned"] },
       "paymentInfo.status": "success",
     }).sort({ createdAt: 1 });
  
@@ -135,16 +137,13 @@ const calculateCLVMetrics = (customerAnalytics, orders) => {
       Math.round((totalProfit / totalRevenue) * 100 * 100) / 100;
   }
 
-  // FIX S2: customerAnalytics.customerAgeDays does not exist as a model field —
-  // it was always undefined, so the fallback 365 was always used.
-  // Compute it directly from the earliest order date (same source as purchase behavior).
+  // FIX S2: Use actual first order date instead of non-existent customerAgeDays field
   const firstOrderDate = orders[0].createdAt;
   const customerAgeDays = Math.floor(
     (Date.now() - firstOrderDate.getTime()) / (1000 * 60 * 60 * 24)
   );
 
-  // FIX S1 (continued): avgDaysBetweenPurchases is now reliably populated because
-  // calculatePurchaseBehavior runs first.
+  // FIX S1 (continued): avgDaysBetweenPurchases is now reliably populated
   const avgDaysBetweenPurchases =
     customerAnalytics.purchaseBehavior?.avgDaysBetweenPurchases || 90;
 
@@ -216,9 +215,7 @@ const calculatePurchaseBehavior = async (customerAnalytics, orders) => {
   const customerAgeDays = Math.floor(
     (Date.now() - orders[0].createdAt.getTime()) / (1000 * 60 * 60 * 24)
   );
-  // FIX S3: If the first order was placed today customerAgeDays is 0 and
-  // customerAgeMonths is 0, producing Infinity for purchaseFrequency.
-  // Clamp to a minimum of 1 month.
+  // FIX S3: Prevent division by zero for new customers
   const customerAgeMonths = Math.max(customerAgeDays / 30, 1);
   customerAnalytics.purchaseBehavior.purchaseFrequency =
     Math.round((orders.length / customerAgeMonths) * 100) / 100;
@@ -230,10 +227,8 @@ const calculatePurchaseBehavior = async (customerAnalytics, orders) => {
       ) / 100;
   }
 
-  // NOTE: favoriteCategories tracks product names, not categories, because
-  // orderItems don't carry a category field — the Product document must be
-  // populated to get the real category. Tracked under a neutral key for now;
-  // replace with a lookup if you need true category data.
+  // NOTE: favoriteCategories tracks product names, not categories
+  // Replace with Product model lookup if true category data is needed
   const categoryMap = new Map();
   orders.forEach((order) => {
     order.orderItems?.forEach((item) => {
@@ -283,11 +278,7 @@ const calculatePurchaseBehavior = async (customerAnalytics, orders) => {
     .sort((a, b) => b.purchaseCount - a.purchaseCount)
     .slice(0, 10);
 
-  // FIX S4: Object.keys().reduce(fn, null) — the null seed means the first
-  // iteration evaluates paymentMethods[null] (undefined), which is always less
-  // than any real count, so the real key wins. Correct by accident but fragile
-  // and breaks on an empty object (returns null instead of undefined).
-  // Fix: only reduce when there are keys; omit the initial-value trap.
+  // FIX S4: Properly handle empty payment methods object
   const paymentMethods = {};
   orders.forEach((order) => {
     const method = order.paymentInfo?.method;
@@ -527,6 +518,9 @@ export const getCustomerAnalyticsSummary = async () => {
   return summary[0];
 };
 
+// ============================================
+// HELPER: Calculate Discount Engagement
+// ============================================
 
 const calculateDiscountEngagement = async (customerAnalytics, orders) => {
   if (orders.length === 0) {
@@ -615,7 +609,6 @@ const calculateDiscountEngagement = async (customerAnalytics, orders) => {
     lastDiscountUsedAt,
   };
 };
- 
 
 export default {
   syncCustomerAnalytics,

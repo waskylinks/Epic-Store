@@ -759,15 +759,29 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   });
 
   // ── Post-payment async tasks ──────────────────────────────────────────────
+  // [FIX] Reordered so syncCustomerAfterOrder runs FIRST, creating the
+  // CustomerAnalytics document before stitchIdentityFromRequest tries to
+  // update it with upsert:false.
 
   setImmediate(async () => {
 
+    // 1. Sync CustomerAnalytics FIRST — creates the document if it doesn't exist.
+    //    stitchIdentity runs after because it uses upsert:false and will no-op
+    //    silently if the document doesn't exist yet.
+    try {
+      await syncCustomerAfterOrder(order._id);
+    } catch (err) {
+      console.error('[payment] syncCustomerAfterOrder failed (non-fatal):', err.message);
+    }
+
+    // 2. Stitch anonymous ID now that CustomerAnalytics document is guaranteed to exist.
     try {
       await stitchIdentityFromRequest(req);
     } catch (err) {
       console.error('[Identity] Purchase stitch failed (non-fatal):', err.message);
     }
 
+    // 3. Checkout conversion attribution
     try {
       const checkout = await Checkout.findOne({
         user:                     userId,
@@ -805,6 +819,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       console.error('[payment] Checkout conversion attribution failed:', err.message, err.stack);
     }
 
+    // 4. Discount sync
     try {
       if (session.discount) {
         const discountLookup = session.discount.discountId
@@ -830,8 +845,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       console.error('[payment] Discount sync failed:', err.message);
     }
 
-    syncCustomerAfterOrder(order._id).catch(() => {});
-
+    // 5. Receipt, session cleanup, cache invalidation
     createReceiptIfNotExists({
       orderId:        order._id,
       userId,

@@ -186,17 +186,16 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
     // Welcome email failure must not block verification success
   }
 
-  syncCustomerAnalytics(user._id).catch(() => {});
+  // Chain stitch after sync so the CustomerAnalytics document exists
+  // before stitchIdentity runs. Both are fire-and-forget from the user's
+  // perspective — the auth response is sent immediately below regardless.
+  syncCustomerAnalytics(user._id)
+    .then(() => stitchIdentityFromRequest(req))
+    .catch(err =>
+      console.error('[Identity] verifyEmail sync+stitch failed (non-fatal):', err.message)
+    );
 
-  stitchIdentityFromRequest(req).catch(err =>
-    console.error('[Identity] VerifyEmail stitch failed (non-fatal):', err.message)
-  );
-
-  // [FIX] Fire Meta CAPI CompleteRegistration + GA4 sign_up.
-  // Previously missing — orchestrator and CAPI functions were correct but
-  // this call was never made, so no CompleteRegistration event appeared in
-  // Meta Events Manager for newly verified users.
-  // fire-and-forget — never blocks the auth response
+  // Fire Meta CAPI CompleteRegistration + GA4 sign_up — fire-and-forget
   fireSignUpEvent('email', user, req).catch(err =>
     console.error('[Analytics] fireSignUpEvent failed (non-fatal):', err.message)
   );
