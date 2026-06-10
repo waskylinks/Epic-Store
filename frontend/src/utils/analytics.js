@@ -229,18 +229,37 @@ export const captureUTMsOnLoad = () => {
  * Stored with a capturedAt timestamp for expiry checks in getClickId().
  * Call on every page load so new ad clicks are always captured.
  */
+
 export const captureClickIds = () => {
   try {
     const params = new URLSearchParams(window.location.search);
-    const clickIdMap = {
+
+    const incoming = {
       [KEYS.GCLID]:   params.get('gclid'),
       [KEYS.FBCLID]:  params.get('fbclid'),
       [KEYS.TTCLID]:  params.get('ttclid'),
       [KEYS.MSCLKID]: params.get('msclkid'),
     };
 
-    Object.entries(clickIdMap).forEach(([key, value]) => {
-      if (value) localStorage.setItem(key, JSON.stringify({ value, capturedAt: new Date().toISOString() }));
+    const allKeys = Object.keys(incoming);
+    const hasAnyIncoming = allKeys.some(key => incoming[key]);
+
+    if (hasAnyIncoming) {
+      // A new ad click has arrived — clear ALL existing click IDs first
+      // so a prior platform's click ID never bleeds into a new session.
+      // e.g. landing from Google after a prior Facebook click should not
+      // report both gclid and fbclid on the resulting order.
+      allKeys.forEach(key => localStorage.removeItem(key));
+    }
+
+    allKeys.forEach(key => {
+      const value = incoming[key];
+      if (value) {
+        localStorage.setItem(key, JSON.stringify({
+          value,
+          capturedAt: new Date().toISOString(),
+        }));
+      }
     });
 
   } catch (err) {
