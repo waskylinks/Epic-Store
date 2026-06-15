@@ -6,6 +6,7 @@ import { emailTemplates } from "../utils/emailTemplates.js";
 import { oauthLogger } from "../utils/logger.js";
 import crypto from "crypto";
 import { stitchIdentity, stitchIdentityFromRequest } from '../middleware/identityMiddleware.js'; // PHASE 2
+import { syncCustomerAnalytics } from '../Services/customer-analytics-service.js'; // PHASE 2
 
 // GOOGLE OAUTH CONTROLLERS
 
@@ -109,13 +110,22 @@ export const googleAuthCallback = (req, res, next) => {
             });
 
             // PHASE 2: Stitch anonymous ID to authenticated user (non-blocking)
-            // req.user is not populated in session:false passport callbacks,
-            // so we call stitchIdentity directly with user._id and req.anonymousId.
-            // req.anonymousId is set by identityMiddleware — the epicstore_anon
-            // httpOnly cookie survives the Google OAuth redirect correctly.
-            stitchIdentity(user._id.toString(), req.anonymousId).catch(err =>
+            if (isNewUser) {
+              // New OAuth user — sync first to create CustomerAnalytics document,
+              // then stitch. Without this, stitchIdentity no-ops silently because
+              // upsert:false finds no document to update.
+              syncCustomerAnalytics(user._id)
+                .then(() => stitchIdentity(user._id.toString(), req.anonymousId))
+                .catch(err =>
+                  oauthLogger.error('Google OAuth sync+stitch failed (non-fatal)', { error: err.message })
+                );
+            } else {
+              // Existing user — CustomerAnalytics document already exists from prior
+              // order history, stitch directly.
+              stitchIdentity(user._id.toString(), req.anonymousId).catch(err =>
                 oauthLogger.error('Google OAuth identity stitch failed (non-fatal)', { error: err.message })
-            );
+              );
+            }
 
             return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
@@ -364,12 +374,22 @@ export const facebookAuthCallback = (req, res, next) => {
             });
 
             // PHASE 2: Stitch anonymous ID to authenticated user (non-blocking)
-            // req.user is not populated in session:false passport callbacks,
-            // so we call stitchIdentity directly with user._id and req.anonymousId.
-            // The epicstore_anon httpOnly cookie survives the Facebook OAuth redirect.
-            stitchIdentity(user._id.toString(), req.anonymousId).catch(err =>
+            if (isNewUser) {
+              // New OAuth user — sync first to create CustomerAnalytics document,
+              // then stitch. Without this, stitchIdentity no-ops silently because
+              // upsert:false finds no document to update.
+              syncCustomerAnalytics(user._id)
+                .then(() => stitchIdentity(user._id.toString(), req.anonymousId))
+                .catch(err =>
+                  oauthLogger.error('Facebook OAuth sync+stitch failed (non-fatal)', { error: err.message })
+                );
+            } else {
+              // Existing user — CustomerAnalytics document already exists from prior
+              // order history, stitch directly.
+              stitchIdentity(user._id.toString(), req.anonymousId).catch(err =>
                 oauthLogger.error('Facebook OAuth identity stitch failed (non-fatal)', { error: err.message })
-            );
+              );
+            }
 
             return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
