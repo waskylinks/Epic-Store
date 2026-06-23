@@ -1,50 +1,50 @@
-/**
- * routes/cronRoutes.js  (previously the admin cron router)
- *
- * Unified admin cron router — health, trigger, history, and banner.
- *
- * EDIT SUMMARY (vs previous version):
- *   1. Imported getCronJobHistory and getCronBanner from cronLogController.js
- *   2. Mounted GET /logs/:jobName  → getCronJobHistory
- *   3. Mounted GET /banner         → getCronBanner
- *   4. Added CheckoutRetention to MANUAL_TRIGGER_JOBS, mapped to
- *      runCheckoutRetention from checkoutRetentionJob.js.
- *      The retention job is safe for manual trigger because it gates on
- *      document age (server-side cutoff dates), not on timing-sensitive
- *      state like the recovery email cooldown windows.
- *   5. Manual trigger now passes triggeredBy: 'manual' into runCronJob()
- *      so CronJobLog records the correct source and the banner can surface
- *      it to the admin ("Triggered manually by admin").
- *
- * Mount point: app.use('/api/v1/admin/cron', cronRouter)
- *
- * All routes are protected by verifyUserAuth + roleBaseAccess at the top
- * of this router — no per-route auth decoration needed.
- */
+
 
 import express             from 'express';
 import CronJobStatus       from '../models/CronJobStatus.js';
 import { runCleanup }      from '../jobs/discount-cleanup.js';
 import { runAuditCleanup } from '../jobs/audit-log-cleanup.js';
 import { runCheckoutRetention } from '../jobs/checkoutRetentionJob.js';
+import { runRecoveryEmailRetention } from '../jobs/recoveryEmailRetentionJob.js';
+import { processAnalyticsQueue } from '../jobs/analyticsQueue.js';
 import { runCronJob }      from '../utils/runCronJob.js';
 import {
   getCronJobHistory,
   getCronBanner,
 }                          from '../controller/cronLog-controller.js';
 import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
-import { runRecoveryEmailRetention } from '../jobs/recoveryEmailRetentionJob.js';
 
 const router = express.Router();
 
 // Apply admin auth to every route in this router
 router.use(verifyUserAuth, roleBaseAccess('admin', 'superAdmin'));
 
+// ── Health & Status ──────────────────────────────────────────────────────
+// GET /api/v1/admin/cron/health
+router.get('/health', async (req, res) => {
+  try {
+    const jobs = await CronJobStatus.getAll();
+    res.json({ success: true, jobs });
+  } catch (err) {
+    console.error('[CronHealth] Failed to fetch job statuses:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch cron health' });
+  }
+});
+
+// ── Logs & Banner ────────────────────────────────────────────────────────
+// GET /api/v1/admin/cron/logs/:jobName
+router.get('/logs/:jobName', getCronJobHistory);
+
+// GET /api/v1/admin/cron/banner
+router.get('/banner', getCronBanner);
+
+// ── Manual Trigger ───────────────────────────────────────────────────────
 const MANUAL_TRIGGER_JOBS = {
   DiscountCleanup:        runCleanup,
   AuditCleanup:           runAuditCleanup,
   CheckoutRetention:      runCheckoutRetention,
   RecoveryEmailRetention: runRecoveryEmailRetention,
+  AnalyticsQueue:         processAnalyticsQueue,
 };
 
 router.post('/trigger/:jobName', async (req, res) => {

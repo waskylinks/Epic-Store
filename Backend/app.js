@@ -40,7 +40,7 @@ import seoRoutes from './routes/seo-routes.js';
 import { trackAttribution } from './middleware/attributionMiddleware.js';
 import { sessionMiddleware }  from './middleware/sessionMiddleware.js';
 import { identityMiddleware } from './middleware/identityMiddleware.js';
-import cronHealthRouter from './routes/cronHealthRoutes.js';
+import cronRoutes from './routes/cronRoutes.js';
 import analyticsObservabilityRoutes from './routes/analyticsObservabilityRoutes.js';
 import analyticsEventRoutes from './routes/analytics-event-routes.js';
 
@@ -176,7 +176,7 @@ app.use(identityMiddleware);  // Phase 2 — sets req.anonymousId + epicstore_an
 app.use(trackAttribution);    // existing — sets req.attribution (must stay last in this group)
 
 /* ================= ROUTES ================= */
-app.use('/api/v1/admin/cron', cronHealthRouter);
+app.use('/api/v1/admin/cron', cronRoutes);  // Mount point for cron job routes
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
 app.use('/api/v1/oauth', oauthRoutes);
